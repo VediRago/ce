@@ -1,0 +1,112 @@
+name: Governance audit
+
+# Verifies that the repository's default-branch ruleset matches the
+# intended PR + CI-only enforcement model:
+#   - pull request required, zero mandatory approvals
+#   - no code-owner review requirement
+#   - no last-push-approval requirement
+#   - the named status check is required
+#   - deletion and force-push protection remain on
+#   - no bypass actors are present
+#
+# Fetches the ruleset by its specific known ID (not "first match"), and
+# checks bypass actors for exact emptiness rather than count, so a
+# one-for-one swap of an unapproved actor cannot silently pass.
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Replace with this repository's actual ruleset ID once the ruleset
+  # has been created in GitHub settings.
+  EXPECTED_RULESET_ID: "REPLACE_ME"
+  EXPECTED_CHECK_NAME: "Validate synthetic protected fixture"
+
+jobs:
+  audit:
+    name: Verify default-branch ruleset matches PR+CI-only model
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm ruleset API access
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! gh api "repos/${{ github.repository }}/rulesets/${EXPECTED_RULESET_ID}" > ruleset_detail.json 2>err.txt; then
+            echo "::error::Could not read ruleset ${EXPECTED_RULESET_ID}. This may mean:"
+            echo "::error::  - EXPECTED_RULESET_ID has not been set to the real ruleset ID yet, or"
+            echo "::error::  - GITHUB_TOKEN lacks permission to read repository rulesets."
+            cat err.txt
+            exit 1
+          fi
+          cat ruleset_detail.json
+
+      - name: Verify against PR+CI-only governance model
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -c "
+          import json, sys
+
+          ruleset = json.load(open('ruleset_detail.json'))
+          failures = []
+
+          if ruleset.get('enforcement') != 'active':
+              failures.append('ruleset_not_active')
+
+          include = ruleset.get('conditions', {}).get('ref_name', {}).get('include', [])
+          if '~DEFAULT_BRANCH' not in include:
+              failures.append('ruleset_does_not_target_default_branch')
+
+          rules = {r['type']: r for r in ruleset.get('rules', [])}
+
+          if 'pull_request' not in rules:
+              failures.append('pr_not_required')
+          else:
+              p = rules['pull_request'].get('parameters', {})
+              if p.get('required_approving_review_count', 0) not in (0, None):
+                  failures.append(
+                      f'unexpected_required_approvals: found {p.get(\"required_approving_review_count\")}, expected 0'
+                  )
+              if p.get('require_code_owner_review'):
+                  failures.append('code_owner_review_unexpectedly_enabled')
+              if p.get('require_last_push_approval'):
+                  failures.append('last_push_approval_unexpectedly_enabled')
+
+          if 'required_status_checks' not in rules:
+              failures.append('status_checks_not_required')
+          else:
+              s = rules['required_status_checks'].get('parameters', {})
+              contexts = [c['context'] for c in s.get('required_status_checks', [])]
+              expected_check = '${{ env.EXPECTED_CHECK_NAME }}'
+              if expected_check not in contexts:
+                  failures.append(
+                      f'required_check_name_changed_or_missing: expected \"{expected_check}\", found {contexts}'
+                  )
+
+          if 'deletion' not in rules:
+              failures.append('deletion_protection_missing')
+          if 'non_fast_forward' not in rules:
+              failures.append('force_push_protection_missing')
+
+          bypass_actors = ruleset.get('bypass_actors', [])
+          if len(bypass_actors) != 0:
+              failures.append(
+                  f'unexpected_bypass_actors_present: {bypass_actors} (expected empty list under current governance model)'
+              )
+
+          if failures:
+              print('GOVERNANCE_AUDIT_FAILURE:')
+              for f in failures:
+                  print(f'- {f}')
+              sys.exit(1)
+
+          print('governance audit: ruleset matches PR+CI-only model')
+          "
