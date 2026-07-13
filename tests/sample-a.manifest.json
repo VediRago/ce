@@ -1,0 +1,8 @@
+{
+  "manifest_version": "1.0.0",
+  "fixtures": {
+    "sample-a.json": {
+      "sha256": "d3770f2aa24637127888a27c32d396c82982743a812590c766f1075ca12ce15b"
+    }
+  }
+}

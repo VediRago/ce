@@ -1,0 +1,127 @@
+name: Negative fixture integrity tests
+
+# Exercise the exact canonical checker against mutated scratch copies.
+# Repository files are never modified by this workflow.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "tools/check.py"
+      - ".github/workflows/test-negative.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  negative-tests:
+    name: Confirm canonical checker rejects known-bad states
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run negative test matrix against canonical checker
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SRC_DIR="tests"
+          CHECKER="tools/check.py"
+          WORK_DIR="$(mktemp -d)"
+          FAILURES=0
+
+          cleanup() {
+            rm -rf "$WORK_DIR"
+          }
+          trap cleanup EXIT
+
+          run_case() {
+            local case_name="$1"
+            local expected_reason="$2"
+            local case_dir="$WORK_DIR/$case_name"
+            local output
+            local status
+
+            mkdir -p "$case_dir"
+            cp "$SRC_DIR/sample-a.json" "$case_dir/sample-a.json" 2>/dev/null || true
+            cp "$SRC_DIR/sample-a.manifest.json" "$case_dir/sample-a.manifest.json"
+
+            case "$case_name" in
+              fixture_changed)
+                python3 - "$case_dir/sample-a.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          fixture = json.loads(path.read_text(encoding="utf-8"))
+          fixture["payload"] = "tampered-for-negative-test"
+          path.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")
+          PY
+                ;;
+
+              fixture_missing)
+                rm "$case_dir/sample-a.json"
+                ;;
+
+              wrong_manifest_hash)
+                python3 - "$case_dir/sample-a.manifest.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          manifest = json.loads(path.read_text(encoding="utf-8"))
+          manifest["fixtures"]["sample-a.json"]["sha256"] = "f" * 64
+          path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+          PY
+                ;;
+
+              empty_manifest)
+                printf '{"manifest_version":"1.0.0","fixtures":{}}\n' \
+                  > "$case_dir/sample-a.manifest.json"
+                ;;
+
+              *)
+                echo "::error::Unknown negative test case: $case_name"
+                return 1
+                ;;
+            esac
+
+            set +e
+            output="$(python3 "$CHECKER" "$case_dir" 2>&1)"
+            status=$?
+            set -e
+
+            echo "--- case: $case_name ---"
+            echo "$output"
+
+            if [ "$status" -eq 0 ]; then
+              echo "::error::Case '$case_name' passed but should have failed."
+              FAILURES=$((FAILURES + 1))
+              return
+            fi
+
+            if ! grep -Fq -- "- $expected_reason" <<< "$output"; then
+              echo "::error::Case '$case_name' failed without expected reason '$expected_reason'."
+              FAILURES=$((FAILURES + 1))
+              return
+            fi
+
+            echo "OK: $case_name produced $expected_reason"
+          }
+
+          run_case "fixture_changed" "sha256_mismatch: sample-a.json"
+          run_case "fixture_missing" "missing_fixture: sample-a.json"
+          run_case "wrong_manifest_hash" "sha256_mismatch: sample-a.json"
+          run_case "empty_manifest" "manifest_is_empty"
+
+          if [ "$FAILURES" -ne 0 ]; then
+            echo "::error::$FAILURES negative test case(s) did not behave as expected."
+            exit 1
+          fi
+
+          echo "All negative fixture-integrity cases behaved as expected."
+
+      - name: Confirm baseline fixture still passes
+        run: python3 tools/check.py tests
