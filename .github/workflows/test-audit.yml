@@ -22,9 +22,7 @@ permissions:
   contents: read
 
 env:
-  # Replace with this repository's actual ruleset ID once the ruleset
-  # has been created in GitHub settings.
-  EXPECTED_RULESET_ID: "REPLACE_ME"
+  EXPECTED_RULESET_ID: "18852397"
   EXPECTED_CHECK_NAME: "Validate synthetic protected fixture"
 
 jobs:
@@ -41,7 +39,7 @@ jobs:
           set -euo pipefail
           if ! gh api "repos/${{ github.repository }}/rulesets/${EXPECTED_RULESET_ID}" > ruleset_detail.json 2>err.txt; then
             echo "::error::Could not read ruleset ${EXPECTED_RULESET_ID}. This may mean:"
-            echo "::error::  - EXPECTED_RULESET_ID has not been set to the real ruleset ID yet, or"
+            echo "::error::  - EXPECTED_RULESET_ID is incorrect, or"
             echo "::error::  - GITHUB_TOKEN lacks permission to read repository rulesets."
             cat err.txt
             exit 1
