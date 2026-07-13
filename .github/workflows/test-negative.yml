@@ -18,7 +18,7 @@ jobs:
     name: Confirm canonical checker rejects known-bad states
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Run negative test matrix against canonical checker
         shell: bash
