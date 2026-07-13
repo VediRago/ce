@@ -1,0 +1,18 @@
+name: Validate synthetic protected fixture
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate synthetic protected fixture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run canonical checker
+        run: python3 tools/check.py tests
