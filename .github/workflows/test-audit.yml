@@ -30,7 +30,7 @@ jobs:
     name: Verify default-branch ruleset matches PR+CI-only model
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Confirm ruleset API access
         env:
